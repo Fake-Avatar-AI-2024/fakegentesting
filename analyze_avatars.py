@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 from deepface import DeepFace
 import pandas as pd
 import os, sys, argparse, warnings
@@ -6,6 +7,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Optional
+from PIL import Image, ImageDraw, ImageFont
 
 class FaceNet512Analyzer:
     def __init__(self):
@@ -102,26 +104,6 @@ class FaceNet512Analyzer:
             
         return pd.DataFrame(results)
 
-    def create_analysis_plots(self, 
-                            df: pd.DataFrame, 
-                            results_folder: str, 
-                            persona_name: Optional[str] = None):
-        """Create and save analysis visualizations"""
-        
-        # Distribution plot
-        plt.figure(figsize=(10, 6))
-        sns.histplot(data=df, x='similarity', bins=20)
-        title = f'Similarity Distribution - {persona_name}' if persona_name else 'Similarity Distribution'
-        plt.title(title)
-        plt.xlabel('Similarity to Reference (%)')
-        plt.ylabel('Count')
-        
-        plot_name = f'distribution_{persona_name}.png' if persona_name else 'distribution.png'
-        plt.savefig(os.path.join(results_folder, plot_name))
-        plt.close()
-        
-        # Optional: Add more visualizations here if needed
-
     def analyze_all_personas(self, base_folder: str):
         """
         Analyze all personas in the structured folder
@@ -133,7 +115,7 @@ class FaceNet512Analyzer:
         │   ├── persona2.jpg
         ├── generated/
         │   ├── persona1/
-        │   ├── persona2/
+        │   ├��─ persona2/
         └── results/
         """
         
@@ -207,16 +189,131 @@ class FaceNet512Analyzer:
         for _, row in top_5.iterrows():
             print(f"  {row['image']}: {row['similarity']:.1f}%")
 
-    def _create_combined_plot(self, df: pd.DataFrame, results_folder: str):
-        """Create combined analysis plot for all personas"""
-        plt.figure(figsize=(12, 6))
-        sns.boxplot(data=df, x='persona', y='similarity')
-        plt.title('Similarity Comparison Across Personas')
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.savefig(os.path.join(results_folder, 'combined_comparison.png'))
-        plt.close()
+    def _create_comparison_image(self, df: pd.DataFrame, ref_image_path: str, generated_folder: str, results_folder: str):
+        """Create a comparison image showing the reference, most similar, and least similar images"""
+        # Construct full paths for the images
+        ref_image_full_path = os.path.join('avatar_analysis', 'reference', ref_image_path)
+        most_similar_image_path = os.path.join('avatar_analysis', 'generated', df.nlargest(1, 'similarity').iloc[0]['image'])
+        least_similar_image_path = os.path.join('avatar_analysis', 'generated', df.nsmallest(1, 'similarity').iloc[0]['image'])
+        
+        # Check if the image files exist
+        if not os.path.exists(ref_image_full_path):
+            print(f"Reference image file not found: {ref_image_full_path}")
+            return
+        
+        if not os.path.exists(most_similar_image_path):
+            print(f"Most similar image file not found: {most_similar_image_path}")
+            return
+        
+        if not os.path.exists(least_similar_image_path):
+            print(f"Least similar image file not found: {least_similar_image_path}")
+            return
+        
+        # Load images
+        ref_image = Image.open(ref_image_full_path)
+        most_similar_image = Image.open(most_similar_image_path)
+        least_similar_image = Image.open(least_similar_image_path)
+        
+        # Create a new image with a white background
+        width, height = ref_image.size
+        comparison_image = Image.new('RGB', (width * 3, height + 100), 'white')
+        
+        # Paste the images into the comparison image
+        comparison_image.paste(ref_image, (0, 0))
+        comparison_image.paste(most_similar_image, (width, 0))
+        comparison_image.paste(least_similar_image, (width * 2, 0))
+        
+        # Draw text
+        draw = ImageDraw.Draw(comparison_image)
+        font = ImageFont.load_default()
+        
+        # Titles
+        draw.text((width // 2, height + 10), "Reference Image", fill="black", font=font, anchor="mm")
+        draw.text((width + width // 2, height + 10), "Most Similar Image", fill="black", font=font, anchor="mm")
+        draw.text((width * 2 + width // 2, height + 10), "Least Similar Image", fill="black", font=font, anchor="mm")
+        
+        # Similarity scores
+        most_similar_row = df.nlargest(1, 'similarity').iloc[0]
+        least_similar_row = df.nsmallest(1, 'similarity').iloc[0]
+        draw.text((width // 2, height + 30), f"Score: N/A", fill="black", font=font, anchor="mm")
+        draw.text((width + width // 2, height + 30), f"Score: {most_similar_row['similarity']:.1f}%", fill="black", font=font, anchor="mm")
+        draw.text((width * 2 + width // 2, height + 30), f"Score: {least_similar_row['similarity']:.1f}%", fill="black", font=font, anchor="mm")
+        
+        # Save the comparison image
+        comparison_image_path = os.path.join(results_folder, 'comparison_image.png')
+        comparison_image.save(comparison_image_path)
+        print(f"Comparison image saved to {comparison_image_path}")
 
+    def visualize_results(self, df: pd.DataFrame, results_folder: str, reference_path: str):
+        """Create visualizations of the avatar analysis results"""
+        # Create results folder if it doesn't exist
+        os.makedirs(results_folder, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 1. Create histogram plot
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=df, x='similarity', bins=20)
+        plt.axvline(x=df['similarity'].mean(), color='r', linestyle='--', 
+                label=f"Mean: {df['similarity'].mean():.2f}")
+        plt.title('Distribution of Similarity Scores')
+        plt.xlabel('Similarity Score')
+        plt.ylabel('Count')
+        plt.legend()
+        
+        # Save histogram
+        plot_path = os.path.join(results_folder, f'avatar_analysis_histogram_{timestamp}.png')
+        plt.savefig(plot_path)
+        plt.close()
+        
+        # 2. Create comparison visualization
+        plt.figure(figsize=(15, 5))
+        
+        # Get most and least similar images
+        most_similar_row = df.loc[df['similarity'].idxmax()]
+        least_similar_row = df.loc[df['similarity'].idxmin()]
+        
+        # Load reference image
+        ref_img = cv2.imread(reference_path)
+        ref_img = cv2.cvtColor(ref_img, cv2.COLOR_BGR2RGB)
+        
+        # Load most and least similar images
+        generated_dir = os.path.dirname(os.path.dirname(results_folder)) + '/generated/' + os.path.basename(results_folder)
+        most_similar_path = os.path.join(generated_dir, most_similar_row['image'])
+        least_similar_path = os.path.join(generated_dir, least_similar_row['image'])
+        
+        most_similar_img = cv2.imread(most_similar_path)
+        most_similar_img = cv2.cvtColor(most_similar_img, cv2.COLOR_BGR2RGB)
+        
+        least_similar_img = cv2.imread(least_similar_path)
+        least_similar_img = cv2.cvtColor(least_similar_img, cv2.COLOR_BGR2RGB)
+        
+        # Create subplots
+        plt.subplot(1, 3, 1)
+        plt.imshow(ref_img)
+        plt.title('Reference Image')
+        plt.axis('off')
+        
+        plt.subplot(1, 3, 2)
+        plt.imshow(most_similar_img)
+        plt.title(f'Most Similar\nScore: {most_similar_row["similarity"]:.2f}')
+        plt.axis('off')
+        
+        plt.subplot(1, 3, 3)
+        plt.imshow(least_similar_img)
+        plt.title(f'Least Similar\nScore: {least_similar_row["similarity"]:.2f}')
+        plt.axis('off')
+        
+        plt.suptitle('Avatar Similarity Comparison')
+        
+        # Save comparison plot
+        comparison_path = os.path.join(results_folder, f'avatar_comparison_{timestamp}.png')
+        plt.savefig(comparison_path, bbox_inches='tight', pad_inches=0.2)
+        plt.close()
+        
+        # Save results to CSV
+        csv_path = os.path.join(results_folder, f'avatar_analysis_{timestamp}.csv')
+        df.to_csv(csv_path, index=False)        
+        return None
 
 def find_reference_image(ref_dir: str, persona_name: str) -> str:
     """Find the reference image with any supported extension"""
@@ -347,11 +444,12 @@ def main():
                 persona_name=args.persona
             )
             
-            # Create visualizations
-            analyzer.create_analysis_plots(df, results_folder, args.persona)
+           
             
             # Print summary
             analyzer._print_persona_summary(df, args.persona)
+            
+            analyzer.visualize_results(df, results_folder, reference_path)
             
         except Exception as e:
             print(f"Error during analysis: {str(e)}")
