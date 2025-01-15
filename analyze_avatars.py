@@ -115,7 +115,7 @@ class FaceNet512Analyzer:
         │   ├── persona2.jpg
         ├── generated/
         │   ├── persona1/
-        │   ├��─ persona2/
+        │   ├── persona2/
         └── results/
         """
         
@@ -315,6 +315,19 @@ class FaceNet512Analyzer:
         df.to_csv(csv_path, index=False)        
         return None
 
+    def save_results_to_excel(self, df: pd.DataFrame, results_folder: str):
+        """Save the avatar analysis results to an Excel file"""
+        # Create results folder if it doesn't exist
+        os.makedirs(results_folder, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Define the path for the Excel file
+        excel_path = os.path.join(results_folder, f'avatar_analysis_results_{timestamp}.xlsx')
+        
+        # Save the DataFrame to an Excel file
+        df.to_excel(excel_path, index=False)
+        print(f"Results saved to {excel_path}")
+
 def find_reference_image(ref_dir: str, persona_name: str) -> str:
     """Find the reference image with any supported extension"""
     supported_extensions = ('.jpg', '.jpeg', '.png')
@@ -444,12 +457,15 @@ def main():
                 persona_name=args.persona
             )
             
-           
+            # Save results to Excel
+            analyzer.save_results_to_excel(df, results_folder)
+
+            # Visualize results
+            analyzer.visualize_results(df, results_folder, reference_path)
             
             # Print summary
             analyzer._print_persona_summary(df, args.persona)
-            
-            analyzer.visualize_results(df, results_folder, reference_path)
+    
             
         except Exception as e:
             print(f"Error during analysis: {str(e)}")
